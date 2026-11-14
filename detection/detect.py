@@ -81,20 +81,40 @@ def object_points(pattern):
 
 
 def estimate_pose(corners, pattern, matrix, distortion, max_error=5.0):
+    points = np.ascontiguousarray(corners, dtype=np.float64)
+    if points.shape != (4, 2) or not np.isfinite(points).all():
+        return (None, None)
+    if not cv2.isContourConvex(points.astype(np.float32)) or abs(cv2.contourArea(points.astype(np.float32))) < 1e-06:
+        return (None, None)
     model = object_points(pattern)
-    points = np.asarray(corners, dtype=np.float64)
     try:
-        ok, rvec, tvec = cv2.solvePnP(model, points, matrix, distortion, flags=cv2.SOLVEPNP_IPPE)
+        solutions = cv2.solvePnPGeneric(model, points, matrix, distortion, flags=cv2.SOLVEPNP_IPPE)
     except cv2.error:
-        return None, None
-    if not ok:
-        return None, None
-    rotation, _ = cv2.Rodrigues(rvec)
-    camera = model @ rotation.T + tvec.reshape(1, 3)
-    projected, _ = cv2.projectPoints(model, rvec, tvec, matrix, distortion)
-    error = float(np.sqrt(np.mean(np.sum((projected.reshape(4, 2) - points)**2, axis=1))))
-    return camera.tolist(), error
-
+        return (None, None)
+    candidates = []
+    if not solutions[0]:
+        return (None, None)
+    for rvec, tvec in zip(solutions[1], solutions[2]):
+        poses = [(rvec, tvec)]
+        try:
+            poses.append(cv2.solvePnPRefineLM(model, points, matrix, distortion, rvec.copy(), tvec.copy()))
+        except cv2.error:
+            pass
+        for rotation, translation in poses:
+            if not np.isfinite(rotation).all() or not np.isfinite(translation).all():
+                continue
+            rot, _ = cv2.Rodrigues(rotation)
+            camera = model @ rot.T + translation.reshape(1, 3)
+            if not np.isfinite(camera).all() or np.any(camera[:, 2] <= 0):
+                continue
+            projected, _ = cv2.projectPoints(model, rotation, translation, matrix, distortion)
+            error = float(np.sqrt(np.mean(np.sum((projected.reshape(4, 2) - points) ** 2, axis=1))))
+            if math.isfinite(error) and error <= max_error:
+                candidates.append((error, camera))
+    if not candidates:
+        return (None, None)
+    error, camera = min(candidates, key=lambda candidate: candidate[0])
+    return (camera.tolist(), error)
 
 
 def load_calibration(path):
