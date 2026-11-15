@@ -74,9 +74,3 @@ large 的第 123、137、138 帧各有一个 blue/1 检测未通过 5 px 门槛�
 - [教师模板](https://github.com/HKUAstar/vision-training-assignment)：本地起点版本 `c9fa5e9b66b61f5edcc23341ac7dac83a840bcc3`。
 - [RobotPilots 参考实现](https://github.com/broalantaps/RobotDetectionModel/blob/babaebd6c8b3aeceda0ca924772b2d70d51801b4/OpenvinoInfer.cpp)：参考其输出结构和后处理概念；本实现自行实现预处理、解码、NMS、位姿选择和输出。没有沿用上游的颜色过滤和类别分数 NMS。
 - [OpenCV PnP 文档](https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html)：物体到相机变换、IPPE 和位姿优化。
-
-本项目在 AI 工具辅助下完成。阅读上述流程及单元测试可对应代码中的每个步骤。
-
-## 尚未执行的提交步骤
-
-按用户要求，成果已保存本地提交：未创建个人公开仓库、未 push、未在网站提交。当前 Git origin 指向教师模板，不能直接向该 origin 推送。用户审阅后，需要从教师模板创建自己的公开仓库，再将本地成果推送到自己的仓库，最后提交个人仓库 URL。

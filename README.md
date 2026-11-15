@@ -1,10 +1,11 @@
 # 视觉组作业：检测路线
 
+uid:3036896065
+email: u3689606@connect.hku.hk
+wechatNO: allen317609
+
 已实现装甲板检测、PnP 三维角点估计和逐帧 JSONL 输出。依赖、运行命令、原理、测试和实测结果见 [检测路线实现说明](detection/SOLUTION.md)。完整结果位于 [detection/results](detection/results)。
 
-本地开发完成并已保存提交，尚未 push 或提交网站。下方保留原始作业说明。
-
----
 
 # lyf 的第三次求助
 
