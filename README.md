@@ -11,6 +11,17 @@ WechatNO: allen317609
 代码位于[detection/detect.py](detection/detect.py)。
 结果位于 [detection/results](detection/results)。
 
+## 算法介绍
+
+1. 顺序读取每一帧。居中 letterbox 到 640×640，补边 114，BGR 转 RGB，除以 255 后排为 NCHW，最终传入连续的 float16 张量。
+2. 输出为 `[1,25200,22]`。前八项直接作为四角点，objectness 使用数值稳定的 sigmoid，颜色和图案各自argmax。
+3. 默认置信度阈值 0.5、NMS IoU 阈值 0.5，与作业建议一致。NMS 对四角点的轴对齐包围框按 objectness 降序、跨类别抑制重复，避免同一装甲板不同类别的重复预测。
+4. 保存实际缩放宽高比和整数补边。用 `(point - padding) / scale` 恢复原图坐标。
+5. 图案 `1` 和 `base_big` 使用宽 0.230 m，其余使用宽 0.135 m，高均为 0.056 m。
+6. 物理点以板中心为原点，+X 向右、+Y 向下、+Z 向板内：`(-w/2,-h/2,0)`、`(-w/2,h/2,0)`、`(w/2,h/2,0)`、`(w/2,-h/2,0)`。用原始相机矩阵和畸变参数调用 `solvePnPGeneric(SOLVEPNP_IPPE)` 取得候选。
+7. 排除非有限值、退化/非凸四边形以及任一角点位于相机后方的解。按四点重投影 RMS 选择最优候选。额外设置默认 5 px 的质量门槛（`--max-reprojection-error` 可调），用于拒绝与长方形几何不一致的观测。
+8. 对四个物理角点分别计算 `X_camera = R @ X_object + t`。输出单位为米，坐标为每帧相机系（右、下、前），不估计世界坐标或跨帧跟踪。重投影误差按 `sqrt(mean(sum((projected-observed)^2, axis=1)))` 计算，单位为原图像素。
+9. 每帧写一个 UTF-8 JSON 对象，帧号从 0 开始，时间固定为 `frame_index / 30`。
 
 # lyf 的第三次求助
 
