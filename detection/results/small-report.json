@@ -1,0 +1,25 @@
+{
+  "frames": 360,
+  "detections": 395,
+  "empty_frames": 162,
+  "colors": {
+    "red": 341,
+    "blue": 54
+  },
+  "patterns": {
+    "3": 262,
+    "4": 76,
+    "outpost": 2,
+    "5": 7,
+    "2": 9,
+    "sentry": 38,
+    "1": 1
+  },
+  "pose_failures": 0,
+  "reprojection_rms_median_px": 0.11810547065392162,
+  "reprojection_rms_max_px": 0.5560985400318461,
+  "depth_range_m": [
+    2.285646640910859,
+    12.41151898793106
+  ]
+}

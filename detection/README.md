@@ -1,3 +1,5 @@
+> 本目录已完成检测路线实现。请先阅读 [SOLUTION.md](SOLUTION.md) 中的安装和运行命令、测试方法与结果。入口为 `detect.py`，依赖为 `requirements.txt`。下方保留作业原文。
+
 # 装甲板检测与位姿估计
 
 [中文](README.md) · [English](README.en.md)
