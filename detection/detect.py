@@ -15,64 +15,51 @@ PATTERNS = ('sentry', '1', '2', '3', '4', '5', 'outpost', 'base_small', 'base_bi
 
 
 def preprocess(frame):
-    # 先保留比例缩放，再居中补边
     height, width = frame.shape[:2]
     ratio = min(640 / width, 640 / height)
-    new_w, new_h = round(width * ratio), round(height * ratio)
-    left, top = (640 - new_w) // 2, (640 - new_h) // 2
+    new_w, new_h = (round(width * ratio), round(height * ratio))
+    left, top = ((640 - new_w) // 2, (640 - new_h) // 2)
     canvas = np.full((640, 640, 3), 114, dtype=np.uint8)
     canvas[top:top + new_h, left:left + new_w] = cv2.resize(frame, (new_w, new_h))
     rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
-    image = rgb.astype(np.float32) / 255
-    tensor = image.transpose(2, 0, 1)[None]
-    return np.ascontiguousarray(tensor, dtype=np.float16), (new_w / width, new_h / height, left, top)
-
+    normalized = rgb.astype(np.float32) / 255
+    tensor = normalized.transpose(2, 0, 1)[None]
+    return (np.ascontiguousarray(tensor, dtype=np.float16), (new_w / width, new_h / height, left, top))
 
 
 def nms(corners, scores, threshold):
-    # 先按分数排序，再逐个判断包围框交并比
-    lo, hi = corners.min(axis=1), corners.max(axis=1)
-    order = sorted(range(len(scores)), key=lambda index: -scores[index])
+    lo, hi = (corners.min(axis=1), corners.max(axis=1))
+    areas = np.prod(np.maximum(hi - lo, 0), axis=1)
+    order = np.argsort(-scores, kind='stable')
     keep = []
-    while order:
-        index = order.pop(0)
+    while len(order):
+        index = int(order[0])
         keep.append(index)
-        remaining = []
-        for other in order:
-            overlap = np.maximum(np.minimum(hi[index], hi[other]) - np.maximum(lo[index], lo[other]), 0)
-            intersection = float(overlap[0] * overlap[1])
-            area_a = float(np.prod(hi[index] - lo[index]))
-            area_b = float(np.prod(hi[other] - lo[other]))
-            union = area_a + area_b - intersection
-            iou = intersection / union if union > 0 else 0
-            if iou <= threshold:
-                remaining.append(other)
-        order = remaining
+        rest = order[1:]
+        overlap = np.maximum(np.minimum(hi[index], hi[rest]) - np.maximum(lo[index], lo[rest]), 0)
+        intersection = overlap.prod(axis=1)
+        union = areas[index] + areas[rest] - intersection
+        iou = np.divide(intersection, union, out=np.zeros_like(intersection), where=union > 0)
+        order = rest[iou <= threshold]
     return keep
 
 
-
 def decode(output, transform, confidence=0.5, iou=0.5):
+    if output.shape != (1, 25200, 22):
+        raise ValueError(f'Unexpected model output shape: {output.shape}')
+    rows = output[0]
+    rows = rows[np.isfinite(rows).all(axis=1)]
+    logits = rows[:, 8].astype(np.float64)
+    scores = np.exp(-np.logaddexp(0, -logits))
+    selected = scores >= confidence
+    rows, scores = (rows[selected], scores[selected])
+    points = rows[:, :8].reshape(-1, 4, 2).astype(np.float64)
     sx, sy, left, top = transform
+    points = (points - [left, top]) / [sx, sy]
     detections = []
-    for row in output[0]:
-        score = float(1 / (1 + np.exp(-float(row[8]))))
-        if score < confidence:
-            continue
-        points = row[:8].reshape(4, 2).astype(np.float64)
-        points = (points - [left, top]) / [sx, sy]
-        detections.append(dict(
-            color=COLORS[int(row[9:13].argmax())],
-            pattern=PATTERNS[int(row[13:22].argmax())],
-            confidence=score,
-            corners_px=points.tolist(),
-        ))
-    if not detections:
-        return []
-    corners = np.asarray([item['corners_px'] for item in detections])
-    scores = np.asarray([item['confidence'] for item in detections])
-    return [detections[index] for index in nms(corners, scores, iou)]
-
+    for index in nms(points, scores, iou):
+        detections.append(dict(color=COLORS[int(rows[index, 9:13].argmax())], pattern=PATTERNS[int(rows[index, 13:22].argmax())], confidence=float(scores[index]), corners_px=points[index].tolist()))
+    return detections
 
 
 def object_points(pattern):
@@ -121,50 +108,82 @@ def load_calibration(path):
     with Path(path).open(encoding='utf-8') as stream:
         data = yaml.safe_load(stream)
     matrix = np.asarray(data['camera_matrix'], dtype=np.float64)
-    distortion = np.asarray(data['distort_coeffs'], dtype=np.float64)
-    return matrix, distortion, (data['image_width'], data['image_height'])
+    distortion = np.asarray(data['distort_coeffs'], dtype=np.float64).reshape(-1)
+    if matrix.shape != (3, 3) or distortion.size not in (4, 5, 8, 12, 14) or (not np.isfinite(matrix).all()) or (not np.isfinite(distortion).all()) or (matrix[0, 0] <= 0) or (matrix[1, 1] <= 0):
+        raise ValueError('Invalid camera calibration')
+    return (matrix, distortion, (int(data['image_width']), int(data['image_height'])))
 
 
+def unit_interval(value):
+    value = float(value)
+    if not math.isfinite(value) or not 0 <= value <= 1:
+        raise argparse.ArgumentTypeError('must be in [0, 1]')
+    return value
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--model', required=True)
-    parser.add_argument('--video', required=True)
-    parser.add_argument('--output', required=True)
-    parser.add_argument('--confidence', type=float, default=0.5)
-    parser.add_argument('--nms-iou', type=float, default=0.5)
-    parser.add_argument('--calibration', required=True)
-    args = parser.parse_args()
+
+def positive_float(value):
+    value = float(value)
+    if not math.isfinite(value) or value <= 0:
+        raise argparse.ArgumentTypeError('must be positive and finite')
+    return value
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    for name in ('model', 'video', 'calibration', 'output'):
+        parser.add_argument('--' + name, type=Path, required=True)
+    parser.add_argument('--confidence', type=unit_interval, default=0.5)
+    parser.add_argument('--nms-iou', type=unit_interval, default=0.5)
+    parser.add_argument('--max-reprojection-error', type=positive_float, default=5.0)
+    args = parser.parse_args(argv)
+    for path in (args.model, args.video, args.calibration):
+        if not path.is_file():
+            parser.error(f'File not found: {path}')
+    if args.output.exists():
+        parser.error(f'Output already exists (choose a new path): {args.output}')
+    matrix, distortion, size = load_calibration(args.calibration)
     options = ort.SessionOptions()
     options.intra_op_num_threads = 4
-    session = ort.InferenceSession(args.model, sess_options=options, providers=['CPUExecutionProvider'])
-    input_name = session.get_inputs()[0].name
-    cap = cv2.VideoCapture(args.video)
+    session = ort.InferenceSession(str(args.model), sess_options=options, providers=['CPUExecutionProvider'])
+    model_input = session.get_inputs()[0]
+    if model_input.shape != [1, 3, 640, 640] or model_input.type != 'tensor(float16)':
+        raise ValueError(f'Unexpected model input: {model_input.shape} {model_input.type}')
+    cap = cv2.VideoCapture(str(args.video))
     if not cap.isOpened():
-        raise ValueError('视频打不开')
-    matrix, distortion, size = load_calibration(args.calibration)
-    stream = open(args.output, 'w', encoding='utf-8')
-    count = 0
-    total = 0
+        raise ValueError(f'Cannot decode video: {args.video}')
+    expected_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if abs(fps - 30) > 0.01:
+        cap.release()
+        raise ValueError(f'This assignment expects 30 FPS, got {fps}')
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    count = total = failures = 0
+    started = time.perf_counter()
     try:
-        while True:
-            ok, frame = cap.read()
-            if not ok:
-                break
-            tensor, transform = preprocess(frame)
-            output = session.run(['output'], {input_name: tensor})[0]
-            detections = decode(output, transform, args.confidence, args.nms_iou)
-            for detection in detections:
-                camera, error = estimate_pose(detection['corners_px'], detection['pattern'], matrix, distortion)
-                detection.update(corners_camera_m=camera, reprojection_error_px=error)
-            stream.write(json.dumps(dict(frame_index=count, timestamp_s=count / 30, detections=detections)) + '\n')
-            total += len(detections)
-            count += 1
+        with args.output.open('x', encoding='utf-8') as stream:
+            while True:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                if (frame.shape[1], frame.shape[0]) != size:
+                    raise ValueError('Video dimensions do not match calibration')
+                tensor, transform = preprocess(frame)
+                output = session.run(['output'], {model_input.name: tensor})[0]
+                detections = decode(output, transform, args.confidence, args.nms_iou)
+                for detection in detections:
+                    camera, error = estimate_pose(detection['corners_px'], detection['pattern'], matrix, distortion, args.max_reprojection_error)
+                    detection.update(corners_camera_m=camera, reprojection_error_px=error)
+                    failures += camera is None
+                stream.write(json.dumps(dict(frame_index=count, timestamp_s=count / 30, detections=detections), allow_nan=False) + '\n')
+                count += 1
+                total += len(detections)
+                if count % 60 == 0:
+                    print(f'{count} frames, {total} detections', file=sys.stderr, flush=True)
     finally:
         cap.release()
-        stream.close()
-    print('处理帧数：', count, '检测数：', total)
-
+    if count == 0 or (expected_frames > 0 and count != expected_frames):
+        raise ValueError(f'Incomplete decode: {count}/{expected_frames} frames; output is partial')
+    print(json.dumps(dict(frames=count, detections=total, pose_failures=failures, elapsed_s=round(time.perf_counter() - started, 2))), file=sys.stderr)
 
 
 if __name__ == '__main__':
