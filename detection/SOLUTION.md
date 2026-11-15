@@ -1,32 +1,3 @@
-# 检测路线：实现与复现
-
-本项目实现 Python 检测路线。代码位于 `detect.py`，使用 ONNX Runtime CPU 推理和 OpenCV PnP，不训练模型。保留模板的模型、标定、视频和瞄准路线文件。
-
-## 安装与运行
-
-建议 Python 3.12–3.14；本次实际环境为 macOS arm64、Python 3.14.5。依赖固定在 `requirements.txt`。以下命令从仓库根目录执行，创建的环境、下载缓存和结果都在仓库内：
-
-```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install --no-cache-dir -r detection/requirements.txt
-cd detection
-../.venv/bin/python detect.py --model assets/0526.onnx --video assets/small.mp4 \
-  --calibration assets/calibration.yaml --output results/small-new.jsonl
-../.venv/bin/python detect.py --model assets/0526.onnx --video assets/large.mp4 \
-  --calibration assets/calibration.yaml --output results/large-new.jsonl
-```
-
-Windows 对应解释器路径为 `.venv\Scripts\python.exe`。若固定版本不支持本机平台，需要在独立环境中选用支持该平台的依赖版本。
-
-本次交付已经包含 `results/small.jsonl` 和 `results/large.jsonl`。程序拒绝覆盖已有输出，请为重跑结果指定新路径。运行中的进度和最终统计输出到 stderr，JSONL 文件只包含规定的每帧记录。解码失败、帧数不完整或输入与标定尺寸不符会返回非零状态；这时输出可能是不完整文件，不应当作为完整结果使用。
-
-本机已经装好的环境位于仓库上一级的 `../.vision-venv`（仍在用户指定的工作目录内）。无需重新安装即可从 `detection` 执行：
-
-```sh
-../../.vision-venv/bin/python detect.py --help
-../../.vision-venv/bin/python -m unittest discover -s tests -v
-```
-
 ## 算法
 
 1. 顺序读取每一帧。居中 letterbox 到 640×640，补边 114，BGR 转 RGB，除以 255 后排为 NCHW，最终传入连续的 float16 张量。使用 CPUExecutionProvider，输入形状和类型在启动时校验。
@@ -65,12 +36,3 @@ Windows 对应解释器路径为 `.venv\Scripts\python.exe`。若固定版本不
 两个视频同时在 CPU 上处理，各约 8 秒（不含安装；具体速度随设备变化）。`results/*-report.json` 保存详细类别统计。预览已人工检查第 0、90、180、270 帧：绿色轮廓表示有效位姿，橙色表示位姿失败，角点标号 0–3 与输出顺序一致。
 
 large 的第 123、137、138 帧各有一个 blue/1 检测未通过 5 px 门槛，其最优候选误差分别约 8.776、9.869、6.193 px，因此输出 null。这些检测的高 objectness 不代表其几何点一定可靠。
-
-## 局限与来源
-
-这些视频没有逐帧人工真值，以上验证证明格式和投影几何的一致性，不是精确率、召回率或真实三维误差的测量。低光、遮挡、截断或类别误判仍可能导致漏检、错检或大小模型选择错误。平面双解按当前帧重投影误差选优，未使用时间连续性。NMS 的轴对齐包围框在相邻目标高度重叠时也可能抑制真实目标。
-
-- [作业网站](https://training.herkules.dev/learn/vision-assignment)：类别映射、几何尺寸和输出规范以该作业为准。
-- [教师模板](https://github.com/HKUAstar/vision-training-assignment)：本地起点版本 `c9fa5e9b66b61f5edcc23341ac7dac83a840bcc3`。
-- [RobotPilots 参考实现](https://github.com/broalantaps/RobotDetectionModel/blob/babaebd6c8b3aeceda0ca924772b2d70d51801b4/OpenvinoInfer.cpp)：参考其输出结构和后处理概念；本实现自行实现预处理、解码、NMS、位姿选择和输出。没有沿用上游的颜色过滤和类别分数 NMS。
-- [OpenCV PnP 文档](https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html)：物体到相机变换、IPPE 和位姿优化。
